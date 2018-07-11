@@ -146,8 +146,14 @@ function get_call_options_pricing(ticker, date_of_expiry, strike_price, type) {
   return allData[type];
 }
 
-function g3b_quote(type) {
-  var url = 'https://query2.finance.yahoo.com/v7/finance/quote?formatted=true&lang=en-US&region=US&symbols=G3B.SI&fields=messageBoardId%2ClongName%2CshortName%2CmarketCap%2CunderlyingSymbol%2CunderlyingExchangeSymbol%2CheadSymbolAsString%2CregularMarketPrice%2CregularMarketChange%2CregularMarketChangePercent%2CregularMarketVolume%2Cuuid%2CregularMarketOpen%2CfiftyTwoWeekLow%2CfiftyTwoWeekHigh';
+function sgx_quote(code, type) {
+  if(code === undefined) {
+    code = 'Z74'; // Singtel code
+  }
+  if(type === undefined) {
+   type = 'price';
+  }
+  var url = 'https://query2.finance.yahoo.com/v7/finance/quote?formatted=true&lang=en-US&region=US&symbols=' + code + '.SI&fields=messageBoardId%2ClongName%2CshortName%2CmarketCap%2CunderlyingSymbol%2CunderlyingExchangeSymbol%2CheadSymbolAsString%2CregularMarketPrice%2CregularMarketChange%2CregularMarketChangePercent%2CregularMarketVolume%2Cuuid%2CregularMarketOpen%2CfiftyTwoWeekLow%2CfiftyTwoWeekHigh';
   var options = {
    'method' : 'get',
    'contentType': 'application/json'
@@ -171,6 +177,7 @@ function g3b_quote(type) {
   return allData[type];
 }
 
+/*
 function sgx_quote(code, type) {
   if(code === undefined) {
     code = 'Z74'; // Singtel code
@@ -224,6 +231,7 @@ function sgx_quote(code, type) {
   }
 
 }
+*/
 
 function get_target_string(cmp, target, current_overall_position, current_capital_gain_position) {
   if(target === undefined || target == '') {
