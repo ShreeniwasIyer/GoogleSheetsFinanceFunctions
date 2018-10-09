@@ -5,9 +5,38 @@ function get_url_contents(url, options) {
   if(contents == null) {
     var response =  UrlFetchApp.fetch(url, options);
     contents = response.getContentText();
-    cache.put(cache_key, contents, 60);
+    if(contents.length <= 100000) {
+      var length = contents.length;
+      cache.put(cache_key, contents, 60);
+    }
   }
   return contents;
+}
+
+function getElementsByClassName(element, classToFind) {
+  var data = [];
+  var descendants = element.getDescendants();
+  descendants.push(element);
+  for(i in descendants) {
+    var elt = descendants[i].asElement();
+    if(elt != null) {
+      var classes = elt.getAttribute('class');
+      if(classes != null) {
+        classes = classes.getValue();
+        if(classes == classToFind) data.push(elt);
+        else {
+          classes = classes.split(' ');
+          for(j in classes) {
+            if(classes[j] == classToFind) {
+              data.push(elt);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  return data;
 }
 
 function expected_value(structure, current_price, current_target, worst_case, best_case, dividend, option_cost, option_strike) {
@@ -277,93 +306,113 @@ function run_all_option_candidates() {
   var ct = 1;
   while ( values[ct][0] != "" && values[ct][1] != "") {
     if(values[ct][0] == 'NASDAQ' || values[ct][0] == 'NYSE') {
-      get_good_options(values[ct][1], values[ct][0] + ":" + values[ct][1]);
+      get_good_options(values[ct][1], values[ct][0] + ":" + values[ct][1], values[ct][0]);
     }
     ct++;
   }
   return true;
 }
 
-function get_good_options(code, google_api_code) {
+function get_good_options(code, google_api_code, exchange) {
+  if(exchange === undefined) {
+    exchange = 'ASX';
+  }
   if(code === undefined) {
-    code = 'PBF'; // AT&T code
-    google_api_code = 'NYSE:PBF';
+    code = 'MTS'; // AT&T code
+    google_api_code = 'ASX:MTS';
   }
   var code_calculated = code_exists_in_tab('Options Scratch Pad', 'B', google_api_code);
   if(code_calculated) {
     Logger.log("Skipped calculating options for " + google_api_code + ", since it pre-exists");
     return 0;
   }
-  var http_get_options = {
-   'method' : 'get',
-   'contentType': 'application/json'
-  };
-  var url_options = 'https://query2.finance.yahoo.com/v7/finance/options/' + code;
-  var json_options = get_url_contents(url_options, http_get_options);
-  console.log(json_options);
-  var data_options = JSON.parse(json_options);
-  var stock_quote = data_options.optionChain.result[0].quote;
-  var high52 = stock_quote.fiftyTwoWeekHigh;
-  var low52 = stock_quote.fiftyTwoWeekLow;
-  var cmp = stock_quote.regularMarketPrice;
-  var target_strike_price = cmp*0.9;
+
+  if(exchange === 'NASDAQ' || exchange === 'NYSE') {
+    var http_get_options = {
+     'method' : 'get',
+     'contentType': 'application/json'
+    };
+    var DEDUCTIBLE = 0.01 * 10;
+    var IDEAL_PREMIUM = 200.0;
+    var NORMAL_LOT_SIZE = 100.0;
+    var MIN_ARROC = 8;
 
 
-  console.log(data_options);
-  var all_strikes = data_options.optionChain.result[0].strikes;
-  var strike_price = cmp;
-  for(var i = 0; i < all_strikes.length; i++) {
-    if(all_strikes[i] < target_strike_price) {
-      strike_price = all_strikes[i];
-    }
-  }
-  console.log("Established Strike Price is " + strike_price);
-  //var formatted_date_of_expiry = "" + ((new Date(date_of_expiry) - new Date("1970-01-01"))/1000);
-  var all_expiration_dates_numbers = data_options.optionChain.result[0].expirationDates;
-  var all_expiration_dates = {};
-  var base_date = new Date("1970-01-01");
-  var run_date = Utilities.formatDate(new Date(), "GMT", "yyyy-MM-dd");
-  for(var i = 0; i < all_expiration_dates_numbers.length; i++) {
-    var date_in_string_form = Utilities.formatDate(new Date(base_date.getTime()+(all_expiration_dates_numbers[i]*1000)), "GMT", "yyyy-MM-dd");
-    //var date_in_string_form = (all_expiration_dates_numbers[i]*1000) + new Date("1970-01-01");
-    all_expiration_dates[date_in_string_form] = all_expiration_dates_numbers[i];
-  }
-  var possible_options = [];
-  for(var expiry in all_expiration_dates) {
-    var specific_expiry_url = 'https://query2.finance.yahoo.com/v7/finance/options/' + code + '?date=' + all_expiration_dates[expiry];
-    var json = get_url_contents(specific_expiry_url, http_get_options);
-    var data = JSON.parse(json);
-    var premium = 0;
-    for (var j = 0; j < data.optionChain.result[0].options[0].puts.length; j++) {
-      if(data.optionChain.result[0].options[0].puts[j].strike == strike_price &&
-        data.optionChain.result[0].options[0].puts[j].openInterest >= 100) {
-        premium = data.optionChain.result[0].options[0].puts[j].lastPrice;
+    var url_options = 'https://query2.finance.yahoo.com/v7/finance/options/' + code;
+    var json_options = get_url_contents(url_options, http_get_options);
+    console.log(json_options);
+    var data_options = JSON.parse(json_options);
+    var stock_quote = data_options.optionChain.result[0].quote;
+    var high52 = stock_quote.fiftyTwoWeekHigh;
+    var low52 = stock_quote.fiftyTwoWeekLow;
+    var cmp = stock_quote.regularMarketPrice;
+    var target_strike_price = cmp*(1-DEDUCTIBLE);
+
+    console.log(data_options);
+    var all_strikes = data_options.optionChain.result[0].strikes;
+    var strike_price = cmp;
+    var found_good_strike = false;
+    for(var i = 0; i < all_strikes.length; i++) {
+      if(all_strikes[i] <= target_strike_price) {
+        strike_price = all_strikes[i];
+        found_good_strike = true;
       }
     }
-    var days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));
-    var annualized_premium = premium * 365.0 / days_to_expiry;
-    var arroc = 100.0 * annualized_premium / strike_price;
-    var contracts = Math.ceil(200.0/(premium*100));
-    if(arroc > 8) {
-      console.log("To be listed");
-//      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
-      possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike_price, 'PUT', premium, contracts]);
-        /*{
-          arroc : arroc,
-          strike_price : strike_price,
-          premium : premium,
-          expiry : expiry,
-          days_to_expiry : days_to_expiry
-        }*/
+    if(!found_good_strike) {
+      // We didn't find a single strike price below the target
+      return 0;
     }
+
+    console.log("Established Strike Price is " + strike_price);
+    //var formatted_date_of_expiry = "" + ((new Date(date_of_expiry) - new Date("1970-01-01"))/1000);
+    var all_expiration_dates_numbers = data_options.optionChain.result[0].expirationDates;
+    var all_expiration_dates = {};
+    var base_date = new Date("1970-01-01");
+    var run_date = Utilities.formatDate(new Date(), "GMT", "yyyy-MM-dd");
+    for(var i = 0; i < all_expiration_dates_numbers.length; i++) {
+      var date_in_string_form = Utilities.formatDate(new Date(base_date.getTime()+(all_expiration_dates_numbers[i]*1000)), "GMT", "yyyy-MM-dd");
+      //var date_in_string_form = (all_expiration_dates_numbers[i]*1000) + new Date("1970-01-01");
+      all_expiration_dates[date_in_string_form] = all_expiration_dates_numbers[i];
+    }
+    var possible_options = [];
+    for(var expiry in all_expiration_dates) {
+      var specific_expiry_url = 'https://query2.finance.yahoo.com/v7/finance/options/' + code + '?date=' + all_expiration_dates[expiry];
+      var json = get_url_contents(specific_expiry_url, http_get_options);
+      var data = JSON.parse(json);
+      var premium = 0;
+      for (var j = 0; j < data.optionChain.result[0].options[0].puts.length; j++) {
+        if(data.optionChain.result[0].options[0].puts[j].strike == strike_price &&
+          data.optionChain.result[0].options[0].puts[j].openInterest >= 100) {
+          premium = data.optionChain.result[0].options[0].puts[j].lastPrice;
+        }
+      }
+      var days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));
+      var annualized_premium = premium * 365.0 / days_to_expiry;
+      var arroc = 100.0 * annualized_premium / strike_price;
+      var contracts = Math.ceil(IDEAL_PREMIUM/(premium*NORMAL_LOT_SIZE));
+      if(arroc > MIN_ARROC) {
+        console.log("To be listed");
+  //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
+        possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike_price, 'PUT', premium, contracts]);
+          /*{
+            arroc : arroc,
+            strike_price : strike_price,
+            premium : premium,
+            expiry : expiry,
+            days_to_expiry : days_to_expiry
+          }*/
+      }
+    }
+    if(possible_options.length > 0) {
+      var start_row = getFirstEmptyRow('Options Scratch Pad');
+      var end_row = start_row + (possible_options.length - 1);
+      var range = "A" + start_row + ":" + "J" + end_row;
+      SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Options Scratch Pad').getRange(range).setValues(possible_options);
+    }
+    return possible_options.length;
   }
-  if(possible_options.length > 0) {
-    var start_row = getFirstEmptyRow('Options Scratch Pad');
-    var end_row = start_row + (possible_options.length - 1);
-    var range = "A" + start_row + ":" + "J" + end_row;
-    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Options Scratch Pad').getRange(range).setValues(possible_options);
-  }
-  return possible_options.length;
+  return 0;
+
 }
 
 function getFirstEmptyRow(tab_name) {
