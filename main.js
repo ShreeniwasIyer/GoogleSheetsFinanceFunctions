@@ -336,6 +336,7 @@ function get_good_options(code, google_api_code, exchange) {
     var IDEAL_PREMIUM = 200.0;
     var NORMAL_LOT_SIZE = 100.0;
     var MIN_ARROC = 8;
+    var DESIRED_OPEN_INTEREST = 100;
 
 
     var url_options = 'https://query2.finance.yahoo.com/v7/finance/options/' + code;
@@ -346,15 +347,15 @@ function get_good_options(code, google_api_code, exchange) {
     var high52 = stock_quote.fiftyTwoWeekHigh;
     var low52 = stock_quote.fiftyTwoWeekLow;
     var cmp = stock_quote.regularMarketPrice;
-    var target_strike_price = cmp*(1-DEDUCTIBLE);
+    var target_put_strike_price = cmp*(1-DEDUCTIBLE);
 
     console.log(data_options);
     var all_strikes = data_options.optionChain.result[0].strikes;
-    var strike_price = cmp;
+    var put_strike_price = cmp;
     var found_good_strike = false;
     for(var i = 0; i < all_strikes.length; i++) {
-      if(all_strikes[i] <= target_strike_price) {
-        strike_price = all_strikes[i];
+      if(all_strikes[i] <= target_put_strike_price) {
+        put_strike_price = all_strikes[i];
         found_good_strike = true;
       }
     }
@@ -363,7 +364,7 @@ function get_good_options(code, google_api_code, exchange) {
       return 0;
     }
 
-    console.log("Established Strike Price is " + strike_price);
+    console.log("Established Strike Price is " + put_strike_price);
     //var formatted_date_of_expiry = "" + ((new Date(date_of_expiry) - new Date("1970-01-01"))/1000);
     var all_expiration_dates_numbers = data_options.optionChain.result[0].expirationDates;
     var all_expiration_dates = {};
@@ -380,28 +381,76 @@ function get_good_options(code, google_api_code, exchange) {
       var json = get_url_contents(specific_expiry_url, http_get_options);
       var data = JSON.parse(json);
       var premium = 0;
+      var days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));;
+      var annualized_premium = 0;
+      var arroc = 0;
+      var contracts = 0;
       for (var j = 0; j < data.optionChain.result[0].options[0].puts.length; j++) {
-        if(data.optionChain.result[0].options[0].puts[j].strike == strike_price &&
-          data.optionChain.result[0].options[0].puts[j].openInterest >= 100) {
+        // All strikes below the strike price should be fine
+        if(data.optionChain.result[0].options[0].puts[j].strike <= put_strike_price &&
+          data.optionChain.result[0].options[0].puts[j].openInterest >= DESIRED_OPEN_INTEREST) {
+
           premium = data.optionChain.result[0].options[0].puts[j].lastPrice;
+          strike = data.optionChain.result[0].options[0].puts[j].strike;
+
+          annualized_premium = premium * 365.0 / days_to_expiry;
+          arroc = 100.0 * annualized_premium / strike;
+          contracts = -1 * Math.ceil(IDEAL_PREMIUM/(premium*NORMAL_LOT_SIZE));
+          if(arroc >= MIN_ARROC) {
+            console.log("To be listed");
+      //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
+            possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike, 'PUT', premium, contracts]);
+              /*{
+                arroc : arroc,
+                strike_price : strike_price,
+                premium : premium,
+                expiry : expiry,
+                days_to_expiry : days_to_expiry
+              }*/
+          }
         }
       }
-      var days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));
-      var annualized_premium = premium * 365.0 / days_to_expiry;
-      var arroc = 100.0 * annualized_premium / strike_price;
-      var contracts = Math.ceil(IDEAL_PREMIUM/(premium*NORMAL_LOT_SIZE));
-      if(arroc > MIN_ARROC) {
-        console.log("To be listed");
-  //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
-        possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike_price, 'PUT', premium, contracts]);
-          /*{
-            arroc : arroc,
-            strike_price : strike_price,
-            premium : premium,
-            expiry : expiry,
-            days_to_expiry : days_to_expiry
-          }*/
+      var breakeven = cmp*(1 + DEDUCTIBLE);
+      var stock_upside = 0;
+      var IDEAL_CALL_PREMIUM = 100.0;
+
+      if(days_to_expiry <= 180) {
+        // No need to do call calculations if the expiry is less than 6 month away
+        continue;
       }
+
+      var found_call = false;
+
+      for (var j = 0; j < data.optionChain.result[0].options[0].calls.length && !found_call; j++) {
+        // Check arroc since the length of the option could be more than a year away
+        days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));
+        var actual_breakeven = breakeven;
+        if(days_to_expiry > 365) {
+          actual_breakeven = breakeven * Math.pow((1 + DEDUCTIBLE), days_to_expiry/365);
+        }
+        premium = data.optionChain.result[0].options[0].calls[j].lastPrice;
+        strike = data.optionChain.result[0].options[0].calls[j].strike;
+        stock_upside_at_breakeven = (actual_breakeven - strike - premium);
+        contracts = Math.ceil(IDEAL_CALL_PREMIUM/(premium*NORMAL_LOT_SIZE));
+
+        if(stock_upside_at_breakeven > 0) {
+
+          //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
+          possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike, 'CALL', premium, contracts]);
+            /*{
+              arroc : arroc,
+              strike_price : strike_price,
+              premium : premium,
+              expiry : expiry,
+              days_to_expiry : days_to_expiry
+            }*/
+
+
+          //if we have found one strike, it is good enough
+          found_call = true;
+        }
+      }
+
     }
     if(possible_options.length > 0) {
       var start_row = getFirstEmptyRow('Options Scratch Pad');
