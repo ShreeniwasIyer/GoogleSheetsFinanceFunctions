@@ -433,7 +433,7 @@ function get_good_options(code, google_api_code, exchange) {
         stock_upside_at_breakeven = (actual_breakeven - strike - premium);
         contracts = Math.ceil(IDEAL_CALL_PREMIUM/(premium*NORMAL_LOT_SIZE));
 
-        if(stock_upside_at_breakeven > 0) {
+        if(stock_upside_at_breakeven >= 0) {
 
           //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
           possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike, 'CALL', premium, contracts]);
@@ -474,6 +474,19 @@ function getFirstEmptyRow(tab_name) {
   return (ct + 1);
 }
 
+function getFirstEmptyRowFromSheet(sheet) {
+  var column = sheet.getRange('A:A');
+  var values = column.getValues(); // get all data in one call
+  var ct = 3;
+  // Why start at 3 and not 0? Because there are a few tabs
+  // where we fill them up with a space
+  // We could devise a better algorithm, but not worth my time at the moment.
+  while ( values[ct][0] != "" ) {
+    ct++;
+  }
+  return (ct + 1);
+}
+
 function code_exists_in_tab(tab_name, column_character, google_api_code) {
   var column = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(tab_name).getRange(column_character + ':' + column_character);
   var values = column.getValues(); // get all data in one call
@@ -485,4 +498,65 @@ function code_exists_in_tab(tab_name, column_character, google_api_code) {
     ct++;
   }
   return false;
+}
+
+function update_weekly_numbers() {
+  // Historical
+  copy_values_and_formulas(
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config'),
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Historical'),
+    "A",
+    "U",
+    13);
+  // Historical - V2
+  copy_values_and_formulas(
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config'),
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('HistoricalV2'),
+    "A",
+    "Y",
+    21);
+  // Historical - V3
+  copy_values_and_formulas(
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config'),
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('HistoricalV3'),
+    "A",
+    "AA",
+    16);
+  // XIRR
+  copy_values_and_formulas(
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config'),
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('XIRR'),
+    "A",
+    "O",
+    36);
+
+  // XIRR
+  copy_values_and_formulas(
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config'),
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Historical Options'),
+    "A",
+    "AT",
+    40);
+}
+
+function copy_values_and_formulas(fromSheet, toSheet, start_column, end_column, row_number) {
+  var from_range = start_column + row_number + ":" + end_column + row_number;
+  var adjusted_from_column = String.fromCharCode(start_column.charCodeAt(0) + 1);
+
+  // End Column could be 2 characters - this won't work for Z, AZ and BZ etc.
+  // I think we can live with it for the time being,
+  var adjusted_to_column = "";
+  if(end_column.length == 1) {
+    adjusted_to_column = String.fromCharCode(end_column.charCodeAt(0) + 1);
+  } else {
+    adjusted_to_column = end_column.charAt(0) + String.fromCharCode(end_column.charCodeAt(1) + 1);
+  }
+
+  var to_last_row = getFirstEmptyRowFromSheet(toSheet);
+  var to_range = adjusted_from_column + to_last_row + ":" + adjusted_to_column + to_last_row;
+  var date_range = "A" + to_last_row + ":" + "A" + to_last_row;
+  var date_formula_range = "A" + (to_last_row - 1) + ":" + "A" + (to_last_row - 1);
+  toSheet.getRange(date_range).setFormulasR1C1(toSheet.getRange(date_formula_range).getFormulasR1C1());
+  toSheet.getRange(to_range).setValues(fromSheet.getRange(from_range).getValues());
+
 }
