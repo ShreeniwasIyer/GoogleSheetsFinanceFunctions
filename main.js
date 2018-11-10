@@ -390,7 +390,7 @@ function get_good_options(code, google_api_code, exchange) {
         if(data.optionChain.result[0].options[0].puts[j].strike <= put_strike_price &&
           data.optionChain.result[0].options[0].puts[j].openInterest >= DESIRED_OPEN_INTEREST) {
 
-          premium = data.optionChain.result[0].options[0].puts[j].lastPrice;
+          premium = data.optionChain.result[0].options[0].puts[j].bid;
           strike = data.optionChain.result[0].options[0].puts[j].strike;
 
           annualized_premium = premium * 365.0 / days_to_expiry;
@@ -410,47 +410,54 @@ function get_good_options(code, google_api_code, exchange) {
           }
         }
       }
-      var breakeven = cmp*(1 + DEDUCTIBLE);
-      var stock_upside = 0;
-      var IDEAL_CALL_PREMIUM = 100.0;
+      var GENERATE_CALL_OPTIONS = false;
 
-      if(days_to_expiry <= 180) {
-        // No need to do call calculations if the expiry is less than 6 month away
-        continue;
-      }
+      // CALL OPTIONS GENERATOR
+      if (GENERATE_CALL_OPTIONS) {
+        var breakeven = cmp*(1 + DEDUCTIBLE);
+        var stock_upside = 0;
+        var IDEAL_CALL_PREMIUM = 100.0;
+        var CHEAP_OPTION_THRESHOLD = 0.05;
 
-      var found_call = false;
-
-      for (var j = 0; j < data.optionChain.result[0].options[0].calls.length && !found_call; j++) {
-        // Check arroc since the length of the option could be more than a year away
-        days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));
-        var actual_breakeven = breakeven;
-        if(days_to_expiry > 365) {
-          actual_breakeven = breakeven * Math.pow((1 + DEDUCTIBLE), days_to_expiry/365);
+        if(days_to_expiry <= 180) {
+          // No need to do call calculations if the expiry is less than 6 month away
+          continue;
         }
-        premium = data.optionChain.result[0].options[0].calls[j].lastPrice;
-        strike = data.optionChain.result[0].options[0].calls[j].strike;
-        stock_upside_at_breakeven = (actual_breakeven - strike - premium);
-        contracts = Math.ceil(IDEAL_CALL_PREMIUM/(premium*NORMAL_LOT_SIZE));
 
-        if(stock_upside_at_breakeven >= 0) {
+        var found_call = false;
 
-          //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
-          possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike, 'CALL', premium, contracts]);
-            /*{
-              arroc : arroc,
-              strike_price : strike_price,
-              premium : premium,
-              expiry : expiry,
-              days_to_expiry : days_to_expiry
-            }*/
+        for (var j = 0; j < data.optionChain.result[0].options[0].calls.length && !found_call; j++) {
+          // Check arroc since the length of the option could be more than a year away
+          days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));
+          var actual_breakeven = breakeven;
+          if(days_to_expiry >= 365) {
+            actual_breakeven = breakeven * Math.pow((1 + DEDUCTIBLE), days_to_expiry/365);
+          }
+          premium = data.optionChain.result[0].options[0].calls[j].ask;
+          strike = data.optionChain.result[0].options[0].calls[j].strike;
+          stock_upside_at_breakeven = (actual_breakeven - strike - premium);
+          contracts = Math.ceil(IDEAL_CALL_PREMIUM/(premium*NORMAL_LOT_SIZE));
+
+          var premium_percentage = (1.0*premium)/strike;
+
+          if(stock_upside_at_breakeven >= 0 || premium_percentage <= CHEAP_OPTION_THRESHOLD) {
+
+            //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
+            possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike, 'CALL', premium, contracts]);
+              /*{
+                arroc : arroc,
+                strike_price : strike_price,
+                premium : premium,
+                expiry : expiry,
+                days_to_expiry : days_to_expiry
+              } /// SHOULD END HERE
 
 
-          //if we have found one strike, it is good enough
-          found_call = true;
+            //if we have found one strike, it is good enough
+            found_call = true;
+          }
         }
       }
-
     }
     if(possible_options.length > 0) {
       var start_row = getFirstEmptyRow('Options Scratch Pad');
