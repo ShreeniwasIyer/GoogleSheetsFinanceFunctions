@@ -1,3 +1,36 @@
+
+/* Key for this would be google api code, and the value would be a map of human readable dates strings to machine readable dates.
+
+{
+  'NYSE:T' : {
+    '2018-11-29' : '151515151',
+  }
+}
+*/
+options_data_expiries = {};
+
+/*
+Key for this would be google API code and the value would be map of meta data
+{
+  'NYSE:T' : {
+    stock_quote : stock_quote,
+    high52 : high52,
+    low52 : low52,
+    cmp : cmp,
+    target_put_strike_price : target_put_strike_price,
+    put_strike_price : put_strike_price,
+    found_good_strike : found_good_strike
+  }
+}
+*/
+options_meta_data = {};
+
+options_data_prices_puts = {};
+
+options_data_prices_calls = {};
+
+
+
 function get_url_contents(url, options) {
   var cache_key = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, url + options);
   var cache = CacheService.getScriptCache();
@@ -206,62 +239,6 @@ function sgx_quote(code, type) {
   return allData[type];
 }
 
-/*
-function sgx_quote(code, type) {
-  if(code === undefined) {
-    code = 'Z74'; // Singtel code
-  }
-  if(type === undefined) {
-   type = 'price';
-  }
-  if(code === 'G3B') {
-    return g3b_quote(type);
-  }
-  var url = 'https://sgx-premium.wealthmsi.com/sgx/price';
-  var companyUrl = 'https://sgx-premium.wealthmsi.com/sgx/company';
-  var data = {'id': code};
-  var options = {
-   'method' : 'post',
-   'contentType': 'application/json',
-   // Convert the JavaScript object to a JSON string.
-   'payload' : JSON.stringify(data)
-  };
-  switch(type) {
-    case 'price':
-    case 'change':
-    case 'changepct':
-        var json = get_url_contents(url, options);
-        console.log(json);
-        var data = JSON.parse(json);
-        var allData = {
-          'price' : data.price.lastPrice,
-          'change'   : data.price.change,
-          'changepct'  : data.price.percentChange
-        }
-        return allData[type];
-    case 'name':
-    case 'pe':
-    case 'eps':
-    case 'marketcap':
-    case 'high52':
-    case 'low52':
-        var json = get_url_contents(url, options);
-        var data = JSON.parse(json);
-
-        var allData = {
-          'name' : data.company.companyInfo.companyName,
-          'pe'   : data.company.companyInfo.peRatio,
-          'eps'  : data.company.companyInfo.eps,
-          'marketCap': data.company.companyInfo.marketCap,
-          'high52' : data.company.companyInfo.yearHigh,
-          'low52' : data.company.companyInfo.yearLow
-        }
-        return allData[type];
-  }
-
-}
-*/
-
 function get_target_string(cmp, target, current_overall_position, current_capital_gain_position) {
   if(target === undefined || target == '') {
    return "Target not known";
@@ -313,6 +290,80 @@ function run_all_option_candidates() {
   return true;
 }
 
+function get_US_option_expiry_dates(code, google_api_code, exchange, deductible) {
+  var http_get_options = {
+   'method' : 'get',
+   'contentType': 'application/json'
+  };
+  var url_options = 'https://query2.finance.yahoo.com/v7/finance/options/' + code;
+  var json_options = get_url_contents(url_options, http_get_options);
+  console.log(json_options);
+  var data_options = JSON.parse(json_options);
+
+  /* Get basic meta data */
+  var stock_quote = data_options.optionChain.result[0].quote;
+  var high52 = stock_quote.fiftyTwoWeekHigh;
+  var low52 = stock_quote.fiftyTwoWeekLow;
+  var cmp = stock_quote.regularMarketPrice;
+
+  var target_put_strike_price = cmp*(1-deductible);
+
+  console.log(data_options);
+  var all_strikes = data_options.optionChain.result[0].strikes;
+  var put_strike_price = cmp;
+  var found_good_strike = false;
+  for(var i = 0; i < all_strikes.length; i++) {
+    if(all_strikes[i] <= target_put_strike_price) {
+      put_strike_price = all_strikes[i];
+      found_good_strike = true;
+    }
+  }
+  if(!found_good_strike) {
+    // We didn't find a single strike price below the target
+    return 0;
+  }
+
+  var stock_meta_data = {
+    stock_quote : stock_quote,
+    high52 : high52,
+    low52 : low52,
+    cmp : cmp,
+    target_put_strike_price : target_put_strike_price,
+    put_strike_price : put_strike_price,
+    found_good_strike : found_good_strike
+  }
+  options_meta_data[google_api_code] = stock_meta_data;
+
+  /* Get Expiry Dates and fill that in */
+  var all_expiration_dates_numbers = data_options.optionChain.result[0].expirationDates;
+  var all_expiration_dates = {};
+  var base_date = new Date("1970-01-01");
+  for(var i = 0; i < all_expiration_dates_numbers.length; i++) {
+    var date_in_string_form = Utilities.formatDate(new Date(base_date.getTime()+(all_expiration_dates_numbers[i]*1000)), "GMT", "yyyy-MM-dd");
+    //var date_in_string_form = (all_expiration_dates_numbers[i]*1000) + new Date("1970-01-01");
+    all_expiration_dates[date_in_string_form] = all_expiration_dates_numbers[i];
+  }
+  options_data_expiries[google_api_code] = all_expiration_dates;
+  return all_expiration_dates;
+}
+
+function get_US_options_pricing(code, google_api_code, exchange, expiry_date_str, expiry_number) {
+  var specific_expiry_url = 'https://query2.finance.yahoo.com/v7/finance/options/' + code + '?date=' + expiry_number;
+
+  var http_get_options = {
+   'method' : 'get',
+   'contentType': 'application/json'
+  };
+
+  var json = get_url_contents(specific_expiry_url, http_get_options);
+  var data = JSON.parse(json);
+
+  var key = google_api_code + "_" + expiry_date_str;
+  options_data_prices_puts[key] = data.optionChain.result[0].options[0].puts;
+  options_data_prices_calls[key] = data.optionChain.result[0].options[0].calls;
+  return true;
+}
+
 function get_good_options(code, google_api_code, exchange) {
   if(exchange === undefined) {
     exchange = 'ASX';
@@ -327,148 +378,130 @@ function get_good_options(code, google_api_code, exchange) {
     return 0;
   }
 
+
+  var DEDUCTIBLE = 0.01 * 5;
+  var IDEAL_PREMIUM = 200.0;
+  var NORMAL_LOT_SIZE = 100.0;
+  var MIN_ARROC = 5;
+  var DESIRED_OPEN_INTEREST = 0;
+  var run_date = Utilities.formatDate(new Date(), "GMT", "yyyy-MM-dd");
+
+  all_expiration_dates = null;
+  stock_meta_data = null;
+  var currency = null;
   if(exchange === 'NASDAQ' || exchange === 'NYSE') {
-    var http_get_options = {
-     'method' : 'get',
-     'contentType': 'application/json'
-    };
-    var DEDUCTIBLE = 0.01 * 10;
-    var IDEAL_PREMIUM = 200.0;
-    var NORMAL_LOT_SIZE = 100.0;
-    var MIN_ARROC = 8;
-    var DESIRED_OPEN_INTEREST = 100;
+    get_US_option_expiry_dates(code, google_api_code, exchange, DEDUCTIBLE);
+    all_expiration_dates = options_data_expiries[google_api_code];
+    stock_meta_data = options_meta_data[google_api_code];
+    currency = 'USD';
+  } else{
+    currency = 'AUD';
+    return 0;
+  }
 
+  if(!stock_meta_data.found_good_strike) {
+    // We didn't find a single strike price below the target
+    return 0;
+  }
 
-    var url_options = 'https://query2.finance.yahoo.com/v7/finance/options/' + code;
-    var json_options = get_url_contents(url_options, http_get_options);
-    console.log(json_options);
-    var data_options = JSON.parse(json_options);
-    var stock_quote = data_options.optionChain.result[0].quote;
-    var high52 = stock_quote.fiftyTwoWeekHigh;
-    var low52 = stock_quote.fiftyTwoWeekLow;
-    var cmp = stock_quote.regularMarketPrice;
-    var target_put_strike_price = cmp*(1-DEDUCTIBLE);
+  console.log("Established Strike Price is " + stock_meta_data.put_strike_price);
 
-    console.log(data_options);
-    var all_strikes = data_options.optionChain.result[0].strikes;
-    var put_strike_price = cmp;
-    var found_good_strike = false;
-    for(var i = 0; i < all_strikes.length; i++) {
-      if(all_strikes[i] <= target_put_strike_price) {
-        put_strike_price = all_strikes[i];
-        found_good_strike = true;
-      }
-    }
-    if(!found_good_strike) {
-      // We didn't find a single strike price below the target
+  var possible_options = [];
+  for(var expiry in all_expiration_dates) {
+    var key = google_api_code + "_" + expiry;
+
+    if(exchange === 'NASDAQ' || exchange === 'NYSE') {
+      get_US_options_pricing(code, google_api_code, exchange, expiry, all_expiration_dates[expiry]);
+    } else{
       return 0;
     }
 
-    console.log("Established Strike Price is " + put_strike_price);
-    //var formatted_date_of_expiry = "" + ((new Date(date_of_expiry) - new Date("1970-01-01"))/1000);
-    var all_expiration_dates_numbers = data_options.optionChain.result[0].expirationDates;
-    var all_expiration_dates = {};
-    var base_date = new Date("1970-01-01");
-    var run_date = Utilities.formatDate(new Date(), "GMT", "yyyy-MM-dd");
-    for(var i = 0; i < all_expiration_dates_numbers.length; i++) {
-      var date_in_string_form = Utilities.formatDate(new Date(base_date.getTime()+(all_expiration_dates_numbers[i]*1000)), "GMT", "yyyy-MM-dd");
-      //var date_in_string_form = (all_expiration_dates_numbers[i]*1000) + new Date("1970-01-01");
-      all_expiration_dates[date_in_string_form] = all_expiration_dates_numbers[i];
-    }
-    var possible_options = [];
-    for(var expiry in all_expiration_dates) {
-      var specific_expiry_url = 'https://query2.finance.yahoo.com/v7/finance/options/' + code + '?date=' + all_expiration_dates[expiry];
-      var json = get_url_contents(specific_expiry_url, http_get_options);
-      var data = JSON.parse(json);
-      var premium = 0;
-      var days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));;
-      var annualized_premium = 0;
-      var arroc = 0;
-      var contracts = 0;
-      for (var j = 0; j < data.optionChain.result[0].options[0].puts.length; j++) {
-        // All strikes below the strike price should be fine
-        if(data.optionChain.result[0].options[0].puts[j].strike <= put_strike_price &&
-          data.optionChain.result[0].options[0].puts[j].openInterest >= DESIRED_OPEN_INTEREST) {
+    var puts_data = options_data_prices_puts[key];
+    var premium = 0;
+    var days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));;
+    var annualized_premium = 0;
+    var arroc = 0;
+    var contracts = 0;
+    for (var j = 0; j < puts_data.length; j++) {
+      // All strikes below the strike price should be fine
+      if(puts_data[j].strike <= stock_meta_data.put_strike_price &&
+        puts_data[j].openInterest >= DESIRED_OPEN_INTEREST) {
 
-          premium = data.optionChain.result[0].options[0].puts[j].bid;
-          strike = data.optionChain.result[0].options[0].puts[j].strike;
+        premium = puts_data[j].bid;
+        strike = puts_data[j].strike;
 
-          annualized_premium = premium * 365.0 / days_to_expiry;
-          arroc = 100.0 * annualized_premium / strike;
-          contracts = -1 * Math.ceil(IDEAL_PREMIUM/(premium*NORMAL_LOT_SIZE));
-          if(arroc >= MIN_ARROC) {
-            console.log("To be listed");
-      //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
-            possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike, 'PUT', premium, contracts]);
-              /*{
-                arroc : arroc,
-                strike_price : strike_price,
-                premium : premium,
-                expiry : expiry,
-                days_to_expiry : days_to_expiry
-              }*/
-          }
+        annualized_premium = premium * 365.0 / days_to_expiry;
+        arroc = 100.0 * annualized_premium / strike;
+        contracts = -1 * Math.ceil(IDEAL_PREMIUM/(premium*NORMAL_LOT_SIZE));
+        if(arroc >= MIN_ARROC) {
+          console.log("To be listed");
+    //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
+          possible_options.push([run_date, google_api_code, currency, stock_meta_data.cmp, expiry, '', strike, 'PUT', premium, contracts]);
+            /*{
+              arroc : arroc,
+              strike_price : strike_price,
+              premium : premium,
+              expiry : expiry,
+              days_to_expiry : days_to_expiry
+            }*/
         }
       }
-      var GENERATE_CALL_OPTIONS = false;
-
+    }
+      /*
       // CALL OPTIONS GENERATOR
-      if (GENERATE_CALL_OPTIONS) {
-        var breakeven = cmp*(1 + DEDUCTIBLE);
-        var stock_upside = 0;
-        var IDEAL_CALL_PREMIUM = 100.0;
-        var CHEAP_OPTION_THRESHOLD = 0.05;
+      var breakeven = cmp*(1 + DEDUCTIBLE);
+      var stock_upside = 0;
+      var IDEAL_CALL_PREMIUM = 100.0;
+      var CHEAP_OPTION_THRESHOLD = 0.05;
 
-        if(days_to_expiry <= 180) {
-          // No need to do call calculations if the expiry is less than 6 month away
-          continue;
+      if(days_to_expiry <= 180) {
+        // No need to do call calculations if the expiry is less than 6 month away
+        continue;
+      }
+
+      var found_call = false;
+
+      for (var j = 0; j < data.optionChain.result[0].options[0].calls.length && !found_call; j++) {
+        // Check arroc since the length of the option could be more than a year away
+        days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));
+        var actual_breakeven = breakeven;
+        if(days_to_expiry >= 365) {
+          actual_breakeven = breakeven * Math.pow((1 + DEDUCTIBLE), days_to_expiry/365);
         }
+        premium = data.optionChain.result[0].options[0].calls[j].ask;
+        strike = data.optionChain.result[0].options[0].calls[j].strike;
+        stock_upside_at_breakeven = (actual_breakeven - strike - premium);
+        contracts = Math.ceil(IDEAL_CALL_PREMIUM/(premium*NORMAL_LOT_SIZE));
 
-        var found_call = false;
+        var premium_percentage = (1.0*premium)/strike;
 
-        for (var j = 0; j < data.optionChain.result[0].options[0].calls.length && !found_call; j++) {
-          // Check arroc since the length of the option could be more than a year away
-          days_to_expiry = Math.ceil(((new Date(expiry)).getTime() - (new Date()).getTime())/(24*3600*1000));
-          var actual_breakeven = breakeven;
-          if(days_to_expiry >= 365) {
-            actual_breakeven = breakeven * Math.pow((1 + DEDUCTIBLE), days_to_expiry/365);
-          }
-          premium = data.optionChain.result[0].options[0].calls[j].ask;
-          strike = data.optionChain.result[0].options[0].calls[j].strike;
-          stock_upside_at_breakeven = (actual_breakeven - strike - premium);
-          contracts = Math.ceil(IDEAL_CALL_PREMIUM/(premium*NORMAL_LOT_SIZE));
+        if(stock_upside_at_breakeven >= 0 || premium_percentage <= CHEAP_OPTION_THRESHOLD) {
 
-          var premium_percentage = (1.0*premium)/strike;
-
-          if(stock_upside_at_breakeven >= 0 || premium_percentage <= CHEAP_OPTION_THRESHOLD) {
-
-            //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
-            possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike, 'CALL', premium, contracts]);
-              /*{
-                arroc : arroc,
-                strike_price : strike_price,
-                premium : premium,
-                expiry : expiry,
-                days_to_expiry : days_to_expiry
-              } /// SHOULD END HERE
+          //      Price of Underlying Security	Expiry	Status	Strike Price	Type	Premium	Contracts
+          possible_options.push([run_date, google_api_code, 'USD', cmp, expiry, '', strike, 'CALL', premium, contracts]);
+            /*{
+              arroc : arroc,
+              strike_price : strike_price,
+              premium : premium,
+              expiry : expiry,
+              days_to_expiry : days_to_expiry
+            } /// SHOULD END HERE
 
 
-            //if we have found one strike, it is good enough
-            found_call = true;
-          }
+          //if we have found one strike, it is good enough
+          found_call = true;
         }
       }
-    }
-    if(possible_options.length > 0) {
-      var start_row = getFirstEmptyRow('Options Scratch Pad');
-      var end_row = start_row + (possible_options.length - 1);
-      var range = "A" + start_row + ":" + "J" + end_row;
-      SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Options Scratch Pad').getRange(range).setValues(possible_options);
-    }
-    return possible_options.length;
-  }
-  return 0;
+      */
 
+  }
+  if(possible_options.length > 0) {
+    var start_row = getFirstEmptyRow('Options Scratch Pad');
+    var end_row = start_row + (possible_options.length - 1);
+    var range = "A" + start_row + ":" + "J" + end_row;
+    SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Options Scratch Pad').getRange(range).setValues(possible_options);
+  }
+  return possible_options.length;
 }
 
 function getFirstEmptyRow(tab_name) {
