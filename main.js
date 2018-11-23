@@ -25,11 +25,30 @@ Key for this would be google API code and the value would be map of meta data
 */
 options_meta_data = {};
 
+/*
+Key for this would be google_api_code + "_" + expiry_date and value would be an array of put pricing:
+
+{
+  'NYSE:T' : [{
+    strike : stock_quote,
+    openInterest : high52,
+    bid : low52,
+    ask : cmp
+  },
+  {
+    ...
+  }
+  ]
+}
+*/
 options_data_prices_puts = {};
 
 options_data_prices_calls = {};
 
-
+String.prototype.replaceAll = function(search, replacement) {
+    var target = this;
+    return target.replace(new RegExp(search, 'g'), replacement);
+};
 
 function get_url_contents(url, options) {
   var cache_key = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, url + options);
@@ -68,6 +87,27 @@ function getElementsByClassName(element, classToFind) {
         }
       }
     }
+  }
+  return data;
+}
+
+function getElementById(element, idToFind) {
+  var descendants = element.getDescendants();
+  for(i in descendants) {
+    var elt = descendants[i].asElement();
+    if( elt !=null) {
+      var id = elt.getAttribute('id');
+      if( id !=null && id.getValue()== idToFind) return elt;
+    }
+  }
+}
+
+function getElementsByTagName(element, tagName) {
+  var data = [];
+  var descendants = element.getDescendants();
+  for(i in descendants) {
+    var elt = descendants[i].asElement();
+    if( elt !=null && elt.getName()== tagName) data.push(elt);
   }
   return data;
 }
@@ -347,6 +387,46 @@ function get_US_option_expiry_dates(code, google_api_code, exchange, deductible)
   return all_expiration_dates;
 }
 
+function get_AU_option_expiry_dates(code, google_api_code, exchange, deductible) {
+  /* Key for this would be google api code, and the value would be a map of human readable dates strings to machine readable dates.
+
+{
+  'NYSE:T' : {
+    '2018-11-29' : '151515151',
+  }
+}
+*/
+  var http_get_options = {
+   'method' : 'get',
+   'contentType': 'application/html'
+  };
+  var url_options = 'https://www.asx.com.au/asx/markets/optionPrices.do?by=underlyingCode&underlyingCode=' + code + '&expiryDate=&optionType=B';
+  var content = get_url_contents(url_options, http_get_options);
+
+  var table = Parser
+                    .data(content)
+                    .from('<table cellspacing="0" class="datatable options" id="optionstable">')
+                    .to('</table>')
+                    .build();
+  table = table.replaceAll('<br>', '<br/>').replaceAll('&nbsp;','');
+
+  var doc   = XmlService.parse(table), xml   = doc.getRootElement();
+  var rows = getElementsByTagName(xml, 'tr');
+  // Start from 1 to skip the header
+  for (i = 1; i< rows.length; i++) {
+    var cols = getElementsByTagName(rows[i], 'td');
+    var date_raw = XmlService.getRawFormat().format(cols[0]);
+    var date_raw_text = Parser.data(date_raw)
+                    .from('<td>')
+                    .to('</td>')
+                    .build();
+    var date_moment = Moment.moment(date_raw_text, 'D/MM/YYYY');
+    var converted_date = date_moment.format("YYYY-MM-DD");
+    Logger.log(converted_date);
+  }
+  return false;
+}
+
 function get_US_options_pricing(code, google_api_code, exchange, expiry_date_str, expiry_number) {
   var specific_expiry_url = 'https://query2.finance.yahoo.com/v7/finance/options/' + code + '?date=' + expiry_number;
 
@@ -396,6 +476,7 @@ function get_good_options(code, google_api_code, exchange) {
     currency = 'USD';
   } else{
     currency = 'AUD';
+    get_AU_option_expiry_dates(code, google_api_code, exchange, DEDUCTIBLE);
     return 0;
   }
 
