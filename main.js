@@ -258,7 +258,7 @@ function get_call_options_pricing(ticker, date_of_expiry, strike_price, type) {
 
 function sgx_quote(code, type) {
   if(code === undefined) {
-    code = 'Z74'; // Singtel code
+    code = 'F0HKG062MZ'; // Singtel code
   }
   if(type === undefined) {
    type = 'price';
@@ -277,8 +277,8 @@ function sgx_quote(code, type) {
     'pe'   : 'None',
     'eps'  : 'None',
     'marketCap': 'None',
-    'high52' : actualData.fiftyTwoWeekHigh.raw,
-    'low52' : actualData.fiftyTwoWeekLow.raw,
+    'high52' : (actualData.fiftyTwoWeekHigh === undefined ? 'None': actualData.fiftyTwoWeekHigh.raw),
+    'low52' : (actualData.fiftyTwoWeekLow === undefined ? 'None': actualData.fiftyTwoWeekLow.raw),
     'price' : actualData.regularMarketPrice.raw,
     'change'   : actualData.regularMarketChange.raw,
     'changepct'  : actualData.regularMarketChangePercent.raw
