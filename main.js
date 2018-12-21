@@ -9,6 +9,14 @@
 */
 options_data_expiries = {};
 
+/* Key for this would be google api code, and the value would be an array of strike prices
+
+{
+  'NYSE:T' : [20.0, 20.5, 21],
+}
+*/
+options_data_strikes = {};
+
 /*
 Key for this would be google API code and the value would be map of meta data
 {
@@ -330,11 +338,14 @@ function run_all_option_candidates() {
   return true;
 }
 
-function get_US_option_expiry_dates(code, google_api_code, exchange, deductible) {
+function get_basic_stock_quote_from_yahoo(code, google_api_code, exchange) {
   var http_get_options = {
    'method' : 'get',
    'contentType': 'application/json'
   };
+  if(exchange == 'ASX') {
+    code = code + ".AX";
+  }
   var url_options = 'https://query2.finance.yahoo.com/v7/finance/options/' + code;
   var json_options = get_url_contents(url_options, http_get_options);
   console.log(json_options);
@@ -346,33 +357,19 @@ function get_US_option_expiry_dates(code, google_api_code, exchange, deductible)
   var low52 = stock_quote.fiftyTwoWeekLow;
   var cmp = stock_quote.regularMarketPrice;
 
-  var target_put_strike_price = cmp*(1-deductible);
-
-  console.log(data_options);
-  var all_strikes = data_options.optionChain.result[0].strikes;
-  var put_strike_price = cmp;
-  var found_good_strike = false;
-  for(var i = 0; i < all_strikes.length; i++) {
-    if(all_strikes[i] <= target_put_strike_price) {
-      put_strike_price = all_strikes[i];
-      found_good_strike = true;
-    }
-  }
-  if(!found_good_strike) {
-    // We didn't find a single strike price below the target
-    return 0;
-  }
-
   var stock_meta_data = {
     stock_quote : stock_quote,
     high52 : high52,
     low52 : low52,
     cmp : cmp,
-    target_put_strike_price : target_put_strike_price,
-    put_strike_price : put_strike_price,
-    found_good_strike : found_good_strike
   }
   options_meta_data[google_api_code] = stock_meta_data;
+  return data_options;
+}
+
+function get_US_option_expiry_dates(code, google_api_code, exchange, deductible) {
+  var data_options = get_basic_stock_quote_from_yahoo(code, google_api_code, exchange);
+  options_data_strikes[google_api_code] = data_options.optionChain.result[0].strikes;
 
   /* Get Expiry Dates and fill that in */
   var all_expiration_dates_numbers = data_options.optionChain.result[0].expirationDates;
@@ -388,14 +385,9 @@ function get_US_option_expiry_dates(code, google_api_code, exchange, deductible)
 }
 
 function get_AU_option_expiry_dates(code, google_api_code, exchange, deductible) {
-  /* Key for this would be google api code, and the value would be a map of human readable dates strings to machine readable dates.
+  // We won't be using the return from this function as the rest of the data is being scraped directly.
+  var data_options = get_basic_stock_quote_from_yahoo(code, google_api_code, exchange);
 
-{
-  'NYSE:T' : {
-    '2018-11-29' : '151515151',
-  }
-}
-*/
   var http_get_options = {
    'method' : 'get',
    'contentType': 'application/html'
@@ -412,19 +404,32 @@ function get_AU_option_expiry_dates(code, google_api_code, exchange, deductible)
 
   var doc   = XmlService.parse(table), xml   = doc.getRootElement();
   var rows = getElementsByTagName(xml, 'tr');
+  var all_expiration_dates = {};
+  var last_date_raw = null;
+  var date_raw = "", date_raw_text = "", converted_date = "";
+  var cols = null, date_moment = null;
   // Start from 1 to skip the header
   for (i = 1; i< rows.length; i++) {
-    var cols = getElementsByTagName(rows[i], 'td');
-    var date_raw = XmlService.getRawFormat().format(cols[0]);
-    var date_raw_text = Parser.data(date_raw)
-                    .from('<td>')
-                    .to('</td>')
-                    .build();
-    var date_moment = Moment.moment(date_raw_text, 'D/MM/YYYY');
-    var converted_date = date_moment.format("YYYY-MM-DD");
-    Logger.log(converted_date);
+    cols = getElementsByTagName(rows[i], 'td');
+    if(cols == null || cols.length < 1) {
+      continue;
+    }
+    date_raw = XmlService.getRawFormat().format(cols[0]);
+    if(date_raw == last_date_raw) {
+      // We must have already stored this record, skip and move on..
+      continue;
+    } else {
+      last_date_raw = date_raw;
+    }
+
+    date_raw_text = date_raw.replaceAll('<td>','').replaceAll('</td>','');
+    date_moment = Moment.moment(date_raw_text, 'D/MM/YYYY');
+    converted_date = date_moment.format("YYYY-MM-DD");
+    // Logger.log(converted_date);
+    // all_expiration_dates[converted_date] = date_raw_text;
   }
-  return false;
+  options_data_expiries[google_api_code] = all_expiration_dates;
+  return all_expiration_dates;
 }
 
 function get_US_options_pricing(code, google_api_code, exchange, expiry_date_str, expiry_number) {
@@ -459,11 +464,11 @@ function get_good_options(code, google_api_code, exchange) {
   }
 
 
-  var DEDUCTIBLE = 0.01 * 5;
+  var DEDUCTIBLE = 0.01 * 8;
   var IDEAL_PREMIUM = 200.0;
   var NORMAL_LOT_SIZE = 100.0;
-  var MIN_ARROC = 5;
-  var DESIRED_OPEN_INTEREST = 0;
+  var MIN_ARROC = 8;
+  var DESIRED_OPEN_INTEREST = 50;
   var run_date = Utilities.formatDate(new Date(), "GMT", "yyyy-MM-dd");
 
   all_expiration_dates = null;
@@ -471,8 +476,6 @@ function get_good_options(code, google_api_code, exchange) {
   var currency = null;
   if(exchange === 'NASDAQ' || exchange === 'NYSE') {
     get_US_option_expiry_dates(code, google_api_code, exchange, DEDUCTIBLE);
-    all_expiration_dates = options_data_expiries[google_api_code];
-    stock_meta_data = options_meta_data[google_api_code];
     currency = 'USD';
   } else{
     currency = 'AUD';
@@ -480,10 +483,27 @@ function get_good_options(code, google_api_code, exchange) {
     return 0;
   }
 
-  if(!stock_meta_data.found_good_strike) {
+  all_expiration_dates = options_data_expiries[google_api_code];
+  stock_meta_data = options_meta_data[google_api_code];
+  var all_strikes = options_data_strikes[google_api_code];
+
+  var target_put_strike_price = stock_meta_data.cmp*(1-DEDUCTIBLE);
+  var put_strike_price = stock_meta_data.cmp;
+  var found_good_strike = false;
+  for(var i = 0; i < all_strikes.length; i++) {
+    if(all_strikes[i] <= target_put_strike_price) {
+      put_strike_price = all_strikes[i];
+      found_good_strike = true;
+    }
+  }
+  if(!found_good_strike) {
     // We didn't find a single strike price below the target
     return 0;
   }
+
+  stock_meta_data.target_put_strike_price = target_put_strike_price;
+  stock_meta_data.put_strike_price = put_strike_price;
+  stock_meta_data.found_good_strike = found_good_strike;
 
   console.log("Established Strike Price is " + stock_meta_data.put_strike_price);
 
