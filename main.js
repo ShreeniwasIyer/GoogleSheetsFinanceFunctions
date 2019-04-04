@@ -671,13 +671,15 @@ function update_weekly_numbers() {
     "O",
     36);
 
-  // XIRR
+  // Historical Options
+  /*
   copy_values_and_formulas(
     SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config'),
     SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Historical Options'),
     "A",
     "AT",
     40);
+  */
 }
 
 function copy_values_and_formulas(fromSheet, toSheet, start_column, end_column, row_number) {
